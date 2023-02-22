@@ -1,0 +1,2 @@
+# instaverse
+instagram to fediverse
