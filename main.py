@@ -7,7 +7,10 @@ from dotenv import load_dotenv
 import time
 import random
 import fastapi
+from fastapi import Request
 from fastapi.staticfiles import StaticFiles
+import base64
+import xml.etree.ElementTree as ET
 load_dotenv()
 
 USER = os.getenv('LOGIN')
@@ -17,7 +20,10 @@ print(PASSWORD)
 
 apiUrl = os.getenv('APIURL')
 
-
+# check if data folder exists
+if not os.path.exists('data'):
+    os.makedirs('data')
+    
 
 def getPosts(instaUser):
     # Get instance dirname posts/instaUser
@@ -109,7 +115,7 @@ def getUserInfo(instaUser) :
         f.write(profileBio)
 
 
-def activityPubUser(instaUser) :
+def activityPubUser(apiUrl, instaUser) :
     name = instaUser
     type = 'Person'
     summary = 'Empty'
@@ -139,16 +145,37 @@ def activityPubUser(instaUser) :
 
 
     return {
-        "name": name,
-        "type": type,
-        "summary": summary,
-        "preferredUsername": preferredUsername,
-        "id": id,
+            
+        "@context": [
+        "https://w3id.org/security/v1",
+        "https://www.w3.org/ns/activitystreams",
+            {
+                "manuallyApprovesFollowers": "as:manuallyApprovesFollowers"
+            }
+        ],
+        "id": "https://" + apiUrl + "/users/" + instaUser,
+        "type": "Person",
+        "following": "https://" + apiUrl + "/users/" + instaUser + "/following",
+        "followers": "https://" + apiUrl + "/users/" + instaUser + "/followers",
+        "inbox": "https://" + apiUrl + "/users/" + instaUser + "/inbox",
+        "outbox": "https://" + apiUrl + "/users/" + instaUser + "/outbox",
+        "preferredUsername": instaUser,
+        "name": instaUser,
+        "url": "https://" + apiUrl + "/" + instaUser,
+        "manuallyApprovesFollowers": "false",
+        "publicKey": {
+            "id": "https://" + apiUrl + "/users/" + instaUser + "#main-key",
+            "owner": "https://" + apiUrl + "/users/" + instaUser,
+            "publicKeyPem":  "-----BEGIN PUBLIC KEY-----\n test \n-----END PUBLIC KEY-----",
+        },
         "icon": {
-        "type": "Image",
-        "mediaType": "image/jpeg",
-        "url": apiUrl+'/data/' + instaUser + '/profile.jpg'
-    },
+            "type": "Image",
+            "mediaType": "image/jpeg",
+            "url": "https://" + apiUrl + "/data/" + instaUser + "/profile.jpg?v=1"
+        },
+        "endpoints": {
+            "sharedInbox": "https://" + apiUrl + "/inbox"
+        },
     }
 
 
@@ -164,45 +191,118 @@ def getPostsRoute(instaUser: str):
 
     return {"message": "ok"}
 
-# create a route /user/{instaUser}
-@app.get("/user/{instaUser}")
-def getUserInfoRoute(instaUser: str):
-    response = activityPubUser(instaUser)
-    return response
+@app.get("/users/{instaUser}/outbox")
+def getUserOutboxRoute(instaUser: str, request: fastapi.Request):
+    return {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "id": str(request.url),
+    "type": "OrderedCollection",
+    "totalItems": 0,
+    "orderedItems": []
+}
 
+@app.get("/users/{instaUser}/following")
+def getUserFollowingRoute(instaUser: str, request: fastapi.Request):
+    return {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": str(request.url),
+        "type": "OrderedCollection",
+        "totalItems": 0,
+        "orderedItems": []
+    }
 
+@app.get("/users/{instaUser}/followers")
+def getUserFollowersRoute(instaUser: str, request: fastapi.Request):
+    return {
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": str(request.url),
+        "type": "OrderedCollection",
+        "totalItems": 0,
+        "orderedItems": []
+    }
+
+# user/profile.jpg
+@app.get("/{instaUser}/profile.jpg")
+def getUserProfilePicRoute(instaUser: str, request: fastapi.Request):
+    # open file and return it
+    
+    image = open('data/' + instaUser + '/profile.jpg', 'rb')
+    
+    print(image)
+
+    # return base64.b64encode(image.read())
+    encodedImage = base64.b64encode(image.read())
+    return fastapi.Response(content=encodedImage, media_type="image/jpeg")
+
+    
 
 # create route .well-known/webfinger?resource=acct:{instaprofile}@{domain}
 @app.get("/.well-known/webfinger")
-def webfingerRoute(resource: str):
+def webfingerRoute(resource: str, request: fastapi.Request):
+    
+    
+    
+    # get url domain from fastapi 
+    domain = request.headers['host']
+    
+    apiUrl = domain
+    
+    print(domain)
+    
     # get insta profile from resource
     instaUser = resource.split('@')[0].split(':')[1]
     # get user info
-    response = activityPubUser(instaUser)
+    response = activityPubUser(apiUrl,instaUser)
 
     # format response
     response = {
     "subject": "acct:" + instaUser + "@" + apiUrl,
     "aliases": [
-    "https://mastodon.doesnotexist.club/@yassinsiouda",
-    "https://mastodon.doesnotexist.club/users/yassinsiouda"
+    "https://" + apiUrl + "/" + instaUser,
+    "https://" + apiUrl + "/users/" + instaUser
     ],
     "links": [
         {
         "rel": "http://webfinger.net/rel/profile-page",
         "type": "text/html",
-        "href": apiUrl + "/@" + instaUser
+        "href":'https://' + apiUrl + "/" + instaUser
+        },
+        {
+        "rel": "http://schemas.google.com/g/2010#updates-from",
+        "type": "application/atom+xml",
+        "href":'https://' + apiUrl + "/users/" + instaUser + ".atom"
         },
         {
         "rel": "self",
         "type": "application/activity+json",
-        "href": apiUrl + "/users/" + instaUser
-        },
-        {
-        "rel": "http://ostatus.org/schema/1.0/subscribe",
-        "template": apiUrl + "/authorize_interaction?uri={uri}"
+        "href":'https://' + apiUrl + "/users/" + instaUser
         }
     ]
 }
 
+    return response
+
+
+#  create route /users/{instaUser}.atom
+@app.get("/users/{instaUser}.atom")
+def userAtomRoute(instaUser: str, request: fastapi.Request):
+    # return xml file
+    
+    return {
+        "message": "ok"
+    }
+
+
+# create a route /user/{instaUser} 
+@app.get("/users/{instaUser}")
+def getUserInfoRoute(instaUser: str, request: fastapi.Request):
+    
+    #
+    
+    # get url domain from fastapi 
+    domain = request.headers['host']
+    
+    print(instaUser)
+    
+    response = activityPubUser(domain,instaUser)
     return response
