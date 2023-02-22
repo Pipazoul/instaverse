@@ -7,12 +7,15 @@ from dotenv import load_dotenv
 import time
 import random
 import fastapi
+from fastapi.staticfiles import StaticFiles
 load_dotenv()
 
 USER = os.getenv('LOGIN')
 PASSWORD = os.getenv('PASSWORD')
 print(USER)
 print(PASSWORD)
+
+apiUrl = os.getenv('APIURL')
 
 
 
@@ -68,7 +71,7 @@ def getPosts(instaUser):
 
 def getUserInfo(instaUser) :
     # Get instance
-    insta = instaloader.Instaloader(dirname_pattern='data/{target}/posts')
+    insta = instaloader.Instaloader(dirname_pattern='data/{target}/')
 
     # try to load session usin instaloader
     try:
@@ -88,9 +91,15 @@ def getUserInfo(instaUser) :
     print('getting profile')
     profile = instaloader.Profile.from_username(insta.context, instaUser)
 
-    # save profile info + user profile pic
+    # save profile info + user profile pic to name profile.jpg
     print('saving profile info')
-    insta.download_profile(profile, profile_pic_only=True)
+
+    # create folder for user
+    if not os.path.exists('data/' + instaUser):
+        os.makedirs('data/' + instaUser)    
+    
+    insta.context.get_and_write_raw(profile.profile_pic_url, 'data/' + instaUser + '/profile.jpg')
+    
     # get profile bio 
     print('getting profile bio')
     profileBio = profile.biography
@@ -108,9 +117,45 @@ def activityPubUser(instaUser) :
     id = 'https://www.instagram.com/' + instaUser
     
 
+    # get user info
+    # check if user exists in folder
+    # if not get user info
+    # if yes get user info from folder
+    
+    if os.path.exists('data/' + instaUser):
+        # get profile bio
+        print('getting profile bio')
+        with open('data/' + instaUser + '/bio.txt', 'r') as f:
+            summary = f.read()
+        # return url to profile pic path to 
+
+    else:
+        # get user info
+        getUserInfo(instaUser)
+        # get profile bio
+        print('getting profile bio')
+        with open('data/' + instaUser + '/bio.txt', 'r') as f:
+            summary = f.read()
+
+
+    return {
+        "name": name,
+        "type": type,
+        "summary": summary,
+        "preferredUsername": preferredUsername,
+        "id": id,
+        "icon": {
+        "type": "Image",
+        "mediaType": "image/jpeg",
+        "url": apiUrl+'/data/' + instaUser + '/profile.jpg'
+    },
+    }
+
+
 #getUserInfo('instagram')
 # create a route /getPosts/{instaUser}
 app = fastapi.FastAPI()
+app.mount("/data", StaticFiles(directory="data"), name="data")
 
 @app.get("/getPosts/{instaUser}")
 def getPostsRoute(instaUser: str):
@@ -118,3 +163,46 @@ def getPostsRoute(instaUser: str):
 
 
     return {"message": "ok"}
+
+# create a route /user/{instaUser}
+@app.get("/user/{instaUser}")
+def getUserInfoRoute(instaUser: str):
+    response = activityPubUser(instaUser)
+    return response
+
+
+
+# create route .well-known/webfinger?resource=acct:{instaprofile}@{domain}
+@app.get("/.well-known/webfinger")
+def webfingerRoute(resource: str):
+    # get insta profile from resource
+    instaUser = resource.split('@')[0].split(':')[1]
+    # get user info
+    response = activityPubUser(instaUser)
+
+    # format response
+    response = {
+    "subject": "acct:" + instaUser + "@" + apiUrl,
+    "aliases": [
+    "https://mastodon.doesnotexist.club/@yassinsiouda",
+    "https://mastodon.doesnotexist.club/users/yassinsiouda"
+    ],
+    "links": [
+        {
+        "rel": "http://webfinger.net/rel/profile-page",
+        "type": "text/html",
+        "href": apiUrl + "/@" + instaUser
+        },
+        {
+        "rel": "self",
+        "type": "application/activity+json",
+        "href": apiUrl + "/users/" + instaUser
+        },
+        {
+        "rel": "http://ostatus.org/schema/1.0/subscribe",
+        "template": apiUrl + "/authorize_interaction?uri={uri}"
+        }
+    ]
+}
+
+    return response
